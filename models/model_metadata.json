@@ -1,0 +1,22 @@
+{
+  "model_name": "LightGBM",
+  "run_id": "95a4e11d9c614ec7a6257479552fcaeb",
+  "class_mapping": {
+    "Slight": 0,
+    "Serious": 1,
+    "Fatal": 2
+  },
+  "inverse_class_mapping": {
+    "0": "Slight",
+    "1": "Serious",
+    "2": "Fatal"
+  },
+  "metrics": {
+    "run_id": "95a4e11d9c614ec7a6257479552fcaeb",
+    "val_macro_f1": 0.3677470173126876,
+    "val_high_severity_recall": 0.46646341463414637,
+    "test_macro_f1": 0.3547315068263726,
+    "test_high_severity_recall": 0.40939597315436244,
+    "pipeline_path": "C:\\Users\\Venkatesh\\OneDrive\\Desktop\\MLOPS_ASSIGNMENT\\models\\lightgbm_pipeline.joblib"
+  }
+}

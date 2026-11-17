@@ -1,0 +1,43 @@
+# Python virtual environments & bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+.pytest_cache/
+.freebuff/
+
+# Environment and secrets
+.env
+*.env.local
+
+# MLflow and tracking
+mlruns/
+.mlflow/
+
+# Data and SQLite databases
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Embedded runtimes / binaries
+runtime/
+
+# Logs
+logs/
+*.log
+
+# Model binaries (keep repo lightweight)
+models/*.pkl
+models/*.joblib
+models/*.onnx
+models/*.pt
+models/*.pth
+
+# IDE and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
