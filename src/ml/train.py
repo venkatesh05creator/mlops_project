@@ -1,45 +1,44 @@
-import os
+import json
 import sys
 from pathlib import Path
-from typing import Dict, Any, Tuple, cast
-import json
-import numpy as np
-import pandas as pd
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import joblib
+from typing import Any, cast
 
+import matplotlib
+
+matplotlib.use("Agg")
+import joblib
+import lightgbm as lgb
+import matplotlib.pyplot as plt
+import mlflow
+import mlflow.sklearn
+import numpy as np
+import xgboost as xgb
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
+    accuracy_score,
     classification_report,
     confusion_matrix,
     f1_score,
-    recall_score,
     precision_score,
-    accuracy_score,
+    recall_score,
 )
-from sklearn.utils.class_weight import compute_class_weight, compute_sample_weight
 from sklearn.pipeline import Pipeline
-import lightgbm as lgb
-import xgboost as xgb
-import mlflow
-import mlflow.sklearn
+from sklearn.utils.class_weight import compute_class_weight, compute_sample_weight
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 import config
-from src.utils.logger import get_logger
 from src.ml.data_loader import load_analytical_data
 from src.ml.features import (
-    TrafficFeatureExtractor,
-    get_preprocessor,
-    create_chronological_splits,
-    SEVERITY_LABEL_TO_INT,
     SEVERITY_INT_TO_LABEL,
+    SEVERITY_LABEL_TO_INT,
+    TrafficFeatureExtractor,
+    create_chronological_splits,
+    get_preprocessor,
 )
+from src.utils.logger import get_logger
 
 logger = get_logger("ml_train")
 
@@ -49,7 +48,7 @@ def plot_and_save_confusion_matrix(cm, class_names, output_path: Path, title: st
     fig, ax = plt.subplots(figsize=(6, 5))
     im = ax.imshow(cm, interpolation="nearest", cmap=plt.cm.Blues)
     ax.figure.colorbar(im, ax=ax)
-    
+
     ax.set(
         xticks=np.arange(cm.shape[1]),
         yticks=np.arange(cm.shape[0]),
@@ -57,7 +56,7 @@ def plot_and_save_confusion_matrix(cm, class_names, output_path: Path, title: st
         yticklabels=class_names,
         title=title,
         ylabel="Ground Truth Severity",
-        xlabel="Predicted Severity"
+        xlabel="Predicted Severity",
     )
 
     plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
@@ -66,9 +65,12 @@ def plot_and_save_confusion_matrix(cm, class_names, output_path: Path, title: st
     for i in range(cm.shape[0]):
         for j in range(cm.shape[1]):
             ax.text(
-                j, i, format(cm[i, j], "d"),
-                ha="center", va="center",
-                color="white" if cm[i, j] > thresh else "black"
+                j,
+                i,
+                format(cm[i, j], "d"),
+                ha="center",
+                va="center",
+                color="white" if cm[i, j] > thresh else "black",
             )
     fig.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -76,7 +78,9 @@ def plot_and_save_confusion_matrix(cm, class_names, output_path: Path, title: st
     plt.close(fig)
 
 
-def plot_and_save_feature_importances(feature_names, importances, output_path: Path, top_n: int = 15):
+def plot_and_save_feature_importances(
+    feature_names, importances, output_path: Path, top_n: int = 15
+):
     """Plots and saves top N feature importances."""
     indices = np.argsort(importances)[::-1][:top_n]
     top_features = [feature_names[i] for i in indices]
@@ -96,7 +100,9 @@ def plot_and_save_feature_importances(feature_names, importances, output_path: P
     plt.close(fig)
 
 
-def evaluate_predictions(y_true, y_pred, split_name: str = "val") -> Tuple[Dict[str, float], np.ndarray, Dict[str, Any]]:
+def evaluate_predictions(
+    y_true, y_pred, split_name: str = "val"
+) -> tuple[dict[str, float], np.ndarray, dict[str, Any]]:
     """
     Computes comprehensive multi-class metrics plus pooled high-severity recall and false-negative rate.
     """
@@ -110,8 +116,12 @@ def evaluate_predictions(y_true, y_pred, split_name: str = "val") -> Tuple[Dict[
     macro_prec = precision_score(y_true, y_pred, average="macro", zero_division=0)
 
     # Per-class metrics
-    per_class_rec = recall_score(y_true, y_pred, average=None, labels=labels, zero_division=0)
-    per_class_f1 = f1_score(y_true, y_pred, average=None, labels=labels, zero_division=0)
+    per_class_rec = np.asarray(
+        recall_score(y_true, y_pred, average=None, labels=labels, zero_division=0)
+    )
+    per_class_f1 = np.asarray(
+        f1_score(y_true, y_pred, average=None, labels=labels, zero_division=0)
+    )
 
     # Pooled High-Severity (Serious [1] + Fatal [2]) metrics
     y_true_high = (y_true >= 1).astype(int)
@@ -120,7 +130,12 @@ def evaluate_predictions(y_true, y_pred, split_name: str = "val") -> Tuple[Dict[
     high_sev_fnr = 1.0 - high_sev_recall  # Missed severe accidents rate
 
     cm = confusion_matrix(y_true, y_pred, labels=labels)
-    report = cast(Dict[str, Any], classification_report(y_true, y_pred, target_names=class_names, zero_division=0, output_dict=True))
+    report = cast(
+        dict[str, Any],
+        classification_report(
+            y_true, y_pred, target_names=class_names, zero_division=0, output_dict=True
+        ),
+    )
 
     metrics = {
         f"{split_name}_accuracy": float(acc),
@@ -184,9 +199,13 @@ def train_and_track_models():
 
     # Calculate Balanced Class Weights
     classes = [0, 1, 2]
-    class_weights = compute_class_weight("balanced", classes=np.array(classes), y=y_train)
+    class_weights = compute_class_weight(
+        "balanced", classes=np.array(classes), y=y_train
+    )
     class_weight_dict = {i: float(w) for i, w in zip(classes, class_weights)}
-    class_weight_dict_str = {SEVERITY_INT_TO_LABEL[i]: float(w) for i, w in zip(classes, class_weights)}
+    class_weight_dict_str = {
+        SEVERITY_INT_TO_LABEL[i]: float(w) for i, w in zip(classes, class_weights)
+    }
     train_sample_weights = compute_sample_weight("balanced", y_train)
 
     logger.info(f"Computed Class Weights: {class_weight_dict_str}")
@@ -203,16 +222,16 @@ def train_and_track_models():
                 min_samples_split=5,
                 class_weight=class_weight_dict,
                 random_state=42,
-                n_jobs=-1
+                n_jobs=-1,
             ),
             "params": {
                 "model_type": "RandomForestClassifier",
                 "n_estimators": 150,
                 "max_depth": 12,
                 "min_samples_split": 5,
-                "imbalance_strategy": "balanced_class_weight"
+                "imbalance_strategy": "balanced_class_weight",
             },
-            "fit_kwargs": {}
+            "fit_kwargs": {},
         },
         "LightGBM": {
             "model": lgb.LGBMClassifier(
@@ -222,16 +241,16 @@ def train_and_track_models():
                 class_weight="balanced",
                 random_state=42,
                 verbose=-1,
-                n_jobs=-1
+                n_jobs=-1,
             ),
             "params": {
                 "model_type": "LGBMClassifier",
                 "n_estimators": 150,
                 "max_depth": 8,
                 "learning_rate": 0.05,
-                "imbalance_strategy": "balanced_class_weight"
+                "imbalance_strategy": "balanced_class_weight",
             },
-            "fit_kwargs": {}
+            "fit_kwargs": {},
         },
         "XGBoost": {
             "model": xgb.XGBClassifier(
@@ -242,17 +261,17 @@ def train_and_track_models():
                 num_class=3,
                 eval_metric="mlogloss",
                 random_state=42,
-                n_jobs=-1
+                n_jobs=-1,
             ),
             "params": {
                 "model_type": "XGBClassifier",
                 "n_estimators": 150,
                 "max_depth": 6,
                 "learning_rate": 0.05,
-                "imbalance_strategy": "balanced_sample_weights"
+                "imbalance_strategy": "balanced_sample_weights",
             },
-            "fit_kwargs": {"sample_weight": train_sample_weights}
-        }
+            "fit_kwargs": {"sample_weight": train_sample_weights},
+        },
     }
 
     run_results = {}
@@ -263,7 +282,9 @@ def train_and_track_models():
     class_names = [SEVERITY_INT_TO_LABEL[i] for i in classes]
 
     for model_name, config_dict in models_to_train.items():
-        logger.info(f"\n==================== TRAINING {model_name} ====================")
+        logger.info(
+            f"\n==================== TRAINING {model_name} ===================="
+        )
         model = config_dict["model"]
         params = config_dict["params"]
         fit_kwargs = config_dict["fit_kwargs"]
@@ -279,11 +300,15 @@ def train_and_track_models():
 
             # Validation Predictions & Evaluation
             val_preds = model.predict(X_val_proc)
-            val_metrics, val_cm, val_report = evaluate_predictions(y_val, val_preds, split_name="val")
+            val_metrics, val_cm, val_report = evaluate_predictions(
+                y_val, val_preds, split_name="val"
+            )
 
             # Test Predictions & Evaluation
             test_preds = model.predict(X_test_proc)
-            test_metrics, test_cm, test_report = evaluate_predictions(y_test, test_preds, split_name="test")
+            test_metrics, test_cm, test_report = evaluate_predictions(
+                y_test, test_preds, split_name="test"
+            )
 
             # Log metrics
             mlflow.log_metrics({**val_metrics, **test_metrics})
@@ -300,29 +325,45 @@ def train_and_track_models():
 
             # Generate and log Confusion Matrix Artifacts
             cm_val_path = artifacts_scratch_dir / f"cm_val_{model_name}.png"
-            plot_and_save_confusion_matrix(val_cm, class_names, cm_val_path, f"{model_name} - Validation Confusion Matrix")
+            plot_and_save_confusion_matrix(
+                val_cm,
+                class_names,
+                cm_val_path,
+                f"{model_name} - Validation Confusion Matrix",
+            )
             mlflow.log_artifact(str(cm_val_path), artifact_path="evaluation_plots")
 
             cm_test_path = artifacts_scratch_dir / f"cm_test_{model_name}.png"
-            plot_and_save_confusion_matrix(test_cm, class_names, cm_test_path, f"{model_name} - Test Confusion Matrix")
+            plot_and_save_confusion_matrix(
+                test_cm,
+                class_names,
+                cm_test_path,
+                f"{model_name} - Test Confusion Matrix",
+            )
             mlflow.log_artifact(str(cm_test_path), artifact_path="evaluation_plots")
 
             # Feature Importances Plot
             if hasattr(model, "feature_importances_"):
                 fi_path = artifacts_scratch_dir / f"feat_imp_{model_name}.png"
-                plot_and_save_feature_importances(all_feature_names, model.feature_importances_, fi_path)
+                plot_and_save_feature_importances(
+                    all_feature_names, model.feature_importances_, fi_path
+                )
                 mlflow.log_artifact(str(fi_path), artifact_path="evaluation_plots")
 
             # Log full classification reports as JSON
             mlflow.log_dict(val_report, f"classification_report_val_{model_name}.json")
-            mlflow.log_dict(test_report, f"classification_report_test_{model_name}.json")
+            mlflow.log_dict(
+                test_report, f"classification_report_test_{model_name}.json"
+            )
 
             # Package into an end-to-end Pipeline: Raw Features -> TrafficFeatureExtractor -> Preprocessor -> Model
-            full_inference_pipeline = Pipeline([
-                ("extractor", extractor),
-                ("preprocessor", preprocessor),
-                ("classifier", model)
-            ])
+            full_inference_pipeline = Pipeline(
+                [
+                    ("extractor", extractor),
+                    ("preprocessor", preprocessor),
+                    ("classifier", model),
+                ]
+            )
 
             # Save pipeline locally
             pipeline_path = config.MODELS_DIR / f"{model_name.lower()}_pipeline.joblib"
@@ -333,7 +374,7 @@ def train_and_track_models():
             mlflow.sklearn.log_model(
                 sk_model=full_inference_pipeline,
                 artifact_path="model",
-                serialization_format=mlflow.sklearn.SERIALIZATION_FORMAT_CLOUDPICKLE
+                serialization_format=mlflow.sklearn.SERIALIZATION_FORMAT_CLOUDPICKLE,
             )
 
             run_results[model_name] = {
@@ -342,17 +383,20 @@ def train_and_track_models():
                 "val_high_severity_recall": val_metrics["val_high_severity_recall"],
                 "test_macro_f1": test_metrics["test_macro_f1"],
                 "test_high_severity_recall": test_metrics["test_high_severity_recall"],
-                "pipeline_path": str(pipeline_path)
+                "pipeline_path": str(pipeline_path),
             }
 
             # Decision criteria: High-severity recall is critical for safety, balanced with macro-F1
-            composite_score = 0.5 * val_metrics["val_macro_f1"] + 0.5 * val_metrics["val_high_severity_recall"]
+            composite_score = (
+                0.5 * val_metrics["val_macro_f1"]
+                + 0.5 * val_metrics["val_high_severity_recall"]
+            )
             if composite_score > best_val_score:
                 best_val_score = composite_score
                 best_model_name = model_name
                 best_pipeline = full_inference_pipeline
 
-    logger.info(f"\n==================== COMPARISON & SELECTION ====================")
+    logger.info("\n==================== COMPARISON & SELECTION ====================")
     for m, res in run_results.items():
         logger.info(
             f"Model {m:12s} | Val Macro-F1: {res['val_macro_f1']:.4f} | "
@@ -360,7 +404,9 @@ def train_and_track_models():
             f"Test Macro-F1: {res['test_macro_f1']:.4f}"
         )
 
-    logger.info(f"\n>>> Selected Best Model: {best_model_name} (Composite Score: {best_val_score:.4f})")
+    logger.info(
+        f"\n>>> Selected Best Model: {best_model_name} (Composite Score: {best_val_score:.4f})"
+    )
 
     # Save Best Model as production candidate
     best_prod_pipeline_path = config.MODELS_DIR / "production_pipeline.joblib"
@@ -373,7 +419,7 @@ def train_and_track_models():
         "run_id": run_results[best_model_name]["run_id"],
         "class_mapping": SEVERITY_LABEL_TO_INT,
         "inverse_class_mapping": SEVERITY_INT_TO_LABEL,
-        "metrics": run_results[best_model_name]
+        "metrics": run_results[best_model_name],
     }
     with open(config.MODELS_DIR / "model_metadata.json", "w") as f:
         json.dump(best_info, f, indent=2)
@@ -383,11 +429,12 @@ def train_and_track_models():
         best_run_id = run_results[best_model_name]["run_id"]
         model_uri = f"runs:/{best_run_id}/model"
         reg_model = mlflow.register_model(
-            model_uri=model_uri,
-            name=config.MODEL_REGISTRY_NAME
+            model_uri=model_uri, name=config.MODEL_REGISTRY_NAME
         )
-        logger.info(f"Successfully registered model '{config.MODEL_REGISTRY_NAME}' version {reg_model.version} in MLflow Registry!")
-    except Exception as e:
+        logger.info(
+            f"Successfully registered model '{config.MODEL_REGISTRY_NAME}' version {reg_model.version} in MLflow Registry!"
+        )
+    except Exception as e:  # noqa: BLE001
         logger.warning(f"MLflow model registration notice (local tracking mode): {e}")
 
     return run_results, best_model_name
